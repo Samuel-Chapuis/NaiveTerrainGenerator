@@ -3,7 +3,7 @@ import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
 
-class map (
+class Map (
     var size: Int = 0,
 
     var height_map: Array<IntArray> = arrayOf(),
