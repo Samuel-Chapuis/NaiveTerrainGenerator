@@ -57,7 +57,7 @@ class Noise (
             }
         }
 
-        offsetAdjuster(noise, 64) // Adjust mean to 128 (mid-gray)
+//        offsetAdjuster(noise, 64) // Adjust mean to 128 (mid-gray)
         return noise
     }
 

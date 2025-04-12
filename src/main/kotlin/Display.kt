@@ -27,15 +27,14 @@ enum class ViewMode {
 
 /**
  * A Swing window that displays an infinite grid of chunks with interactive pan/zoom,
- * left-drag selection to generate chunks, and a toggle button to switch between
- * grayscale and color terrain views.
+ * left-drag selection to generate chunks, and separate buttons to switch views.
  *
  * Controls:
  * - Left-click without drag: generate a single chunk.
  * - Left-click drag (select box): on release, generate every chunk within the selection.
  * - Right-click drag: pan the view.
  * - Mouse wheel: zoom in/out centered on the mouse pointer.
- * - Button (top): toggles between grayscale view and color terrain view.
+ * - Buttons (top): click the "Grayscale View" or "Color View" button to switch views.
  *
  * When a chunk is generated, both a grayscale version and a color version are created.
  * A red grid (50% alpha) is drawn over generated chunks.
@@ -48,7 +47,7 @@ class Display(
     private val noise: Noise,
     private val seed: Int,
     private val chunkSize: Int = 16
-) : JFrame("Chunk Generator with Toggle View") {
+) : JFrame("Chunk Generator with Separate View Buttons") {
 
     // Map to store generated chunk images keyed by (chunkX, chunkY).
     // The pair holds (grayscaleImage, coloredImage).
@@ -73,7 +72,6 @@ class Display(
 
     init {
         defaultCloseOperation = EXIT_ON_CLOSE
-        // Use BorderLayout to place the button on top.
         layout = BorderLayout()
 
         // Create the drawing panel.
@@ -151,7 +149,8 @@ class Display(
         }
 
         drawPanel.preferredSize = Dimension(800, 600)
-        // Add mouse listeners for selection, single click generation, and panning.
+
+        // Mouse listeners for selection, single-click generation, and panning.
         drawPanel.addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) {
                 when (e.button) {
@@ -162,7 +161,7 @@ class Display(
                         leftDragCurrentY = e.y
                         isSelecting = true
                     }
-                    MouseEvent.BUTTON3 -> { // Right button: record starting position for panning.
+                    MouseEvent.BUTTON3 -> { // Right button: start panning.
                         lastDragX = e.x
                         lastDragY = e.y
                     }
@@ -178,14 +177,14 @@ class Display(
                             val dragDistX = kotlin.math.abs(leftDragCurrentX - leftDragStartX)
                             val dragDistY = kotlin.math.abs(leftDragCurrentY - leftDragStartY)
                             if (dragDistX < 5 && dragDistY < 5) {
-                                // Treat as a simple click.
+                                // Treat as a single click.
                                 val worldX = (e.x - offsetX) / zoomFactor
                                 val worldY = (e.y - offsetY) / zoomFactor
                                 val clickedChunkX = floor(worldX / chunkSize).toInt()
                                 val clickedChunkY = floor(worldY / chunkSize).toInt()
                                 generateChunkIfNeeded(clickedChunkX, clickedChunkY)
                             } else {
-                                // Generate all chunks within the selected area.
+                                // Generate all chunks in the selected area.
                                 val startWorldX = (leftDragStartX - offsetX) / zoomFactor
                                 val startWorldY = (leftDragStartY - offsetY) / zoomFactor
                                 val endWorldX = (e.x - offsetX) / zoomFactor
@@ -212,13 +211,13 @@ class Display(
 
         drawPanel.addMouseMotionListener(object : MouseAdapter() {
             override fun mouseDragged(e: MouseEvent) {
-                // Update left-drag selection.
+                // Left-button drag: update selection.
                 if ((e.modifiersEx and MouseEvent.BUTTON1_DOWN_MASK) != 0) {
                     leftDragCurrentX = e.x
                     leftDragCurrentY = e.y
                     drawPanel.repaint()
                 }
-                // Update panning with right-button drag.
+                // Right-button drag: update panning.
                 if ((e.modifiersEx and MouseEvent.BUTTON3_DOWN_MASK) != 0) {
                     val dx = e.x - lastDragX
                     val dy = e.y - lastDragY
@@ -245,23 +244,28 @@ class Display(
             }
         })
 
-        // Create a toggle button and add it to a top panel.
-        val toggleButton = JButton("Switch to Color View")
-        toggleButton.addActionListener(object : ActionListener {
+        // Create separate buttons for each view mode.
+        val grayButton = JButton("Grayscale View")
+        grayButton.addActionListener(object : ActionListener {
             override fun actionPerformed(e: ActionEvent?) {
-                // Toggle view mode.
-                viewMode = if (viewMode == ViewMode.GRAYSCALE) ViewMode.COLOR else ViewMode.GRAYSCALE
-                // Update button text.
-                toggleButton.text = if (viewMode == ViewMode.GRAYSCALE) "Switch to Color View"
-                else "Switch to Grayscale View"
-                // Repaint the drawing panel.
+                viewMode = ViewMode.GRAYSCALE
                 drawPanel.repaint()
             }
         })
-        val topPanel = JPanel()
-        topPanel.add(toggleButton)
 
-        // Add the components to the JFrame.
+        val colorButton = JButton("Color View")
+        colorButton.addActionListener(object : ActionListener {
+            override fun actionPerformed(e: ActionEvent?) {
+                viewMode = ViewMode.COLOR
+                drawPanel.repaint()
+            }
+        })
+
+        // Top panel for view-mode buttons.
+        val topPanel = JPanel()
+        topPanel.add(grayButton)
+        topPanel.add(colorButton)
+
         add(topPanel, BorderLayout.NORTH)
         add(drawPanel, BorderLayout.CENTER)
         pack()
@@ -296,8 +300,7 @@ class Display(
                     val colorRGB = when (value) {
                         in 0..32 -> Color(0, 0, 150).rgb
                         in 33..64 -> Color(0, 0, 255).rgb
-                        in 65..69 -> Color(245, 245, 85).rgb
-                        in 70..128 -> Color(85, 220, 85).rgb
+                        in 65..128 -> Color(85, 220, 85).rgb
                         in 129..192 -> Color(200, 200, 200).rgb
                         in 193..255 -> Color(255, 255, 255).rgb
                         else -> grayRGB
