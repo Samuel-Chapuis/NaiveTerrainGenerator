@@ -7,6 +7,8 @@ import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
 import java.awt.image.BufferedImage
+import java.io.File
+import javax.imageio.ImageIO
 import javax.swing.JButton
 import javax.swing.JFrame
 import javax.swing.JPanel
@@ -92,11 +94,24 @@ class Display(
         }
         val showGlobalButton = JButton("Show Global Map").apply {
             addActionListener {
+                // Create the global map image.
                 val globalImage = when (viewMode) {
                     ViewMode.GRAYSCALE -> createGlobalHeightMapImage()
                     ViewMode.COLOR     -> createGlobalColorMapImage()
                     ViewMode.GRADIENT  -> createGlobalGradientMapImage()
                 }
+                // Save the global image as a JPEG in the "/out" folder.
+                try {
+                    val outputDirectory = File("out")
+                    if (!outputDirectory.exists()) {
+                        outputDirectory.mkdirs()
+                    }
+                    val outputFile = File(outputDirectory, "globalMap_${viewMode.name}.jpg")
+                    ImageIO.write(globalImage, "jpg", outputFile)
+                } catch (ex: Exception) {
+                    ex.printStackTrace()
+                }
+                // Open a new frame to display the global image.
                 val mapFrame = JFrame("Global Map - ${viewMode.name}")
                 mapFrame.defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
                 val panel = object : JPanel() {
