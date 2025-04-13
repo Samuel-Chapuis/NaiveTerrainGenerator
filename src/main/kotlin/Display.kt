@@ -1,9 +1,4 @@
-import java.awt.AlphaComposite
-import java.awt.BorderLayout
-import java.awt.Color
-import java.awt.Dimension
-import java.awt.Graphics
-import java.awt.Graphics2D
+import java.awt.*
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.event.MouseWheelEvent
@@ -13,7 +8,6 @@ import java.awt.image.BufferedImage
 import javax.swing.JButton
 import javax.swing.JFrame
 import javax.swing.JPanel
-import javax.swing.SwingUtilities
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -26,20 +20,8 @@ enum class ViewMode {
 
 /**
  * Display class that shows an infinite grid of chunks with interactive panning, zooming, and view modes.
- *
- * When a chunk is generated (via click or selection), its noise data (height map and gradient) are produced,
- * and three images are generated for display (grayscale, color, and gradient). These images are also copied into the
- * global Map instance (which grows dynamically to match the bounds of generated and visible chunks).
- *
- * In addition, this class draws coordinate scales along the bottom and right edges of the display window.
- * These scales display world coordinates (derived from the current pan/zoom settings) with tick marks and labels.
- *
- * The "Show Global Map" button shows a global image based on the current view mode.
- *
- * @param chunkGenerator     An instance of your Noise class.
- * @param seed      The seed used for noise generation.
- * @param map       The Map instance to be updated. (Map must have fields like minChunkX, maxChunkX, minChunkY, maxChunkY, height_map, gradiant_map.)
- * @param chunkSize The size (in pixels) of each chunk.
+ * It now separates the drawing of the coordinate scales into their own panels so that the scales
+ * are displayed on the side (right and bottom) rather than over the map.
  */
 class Display(
     private val chunkGenerator: ChunkGenerator,
@@ -49,13 +31,12 @@ class Display(
 ) : JFrame("Chunk Generator with Dynamic Global Map, Gradient, and Scale") {
 
     // Cache: store generated chunk images keyed by (chunkX, chunkY).
-    // Each entry holds a Triple: (grayscale image, color image, gradient image).
     private val generatedChunks = mutableMapOf<Pair<Int, Int>, Triple<BufferedImage, BufferedImage, BufferedImage>>()
 
     // Pan/zoom parameters.
-    private var zoomFactor = 1.0
-    private var offsetX = 0.0
-    private var offsetY = 0.0
+    var zoomFactor = 1.0
+    var offsetX = 0.0
+    var offsetY = 0.0
     private var lastDragX = 0
     private var lastDragY = 0
 
@@ -69,12 +50,21 @@ class Display(
     // Current view mode.
     private var viewMode = ViewMode.GRAYSCALE
 
+    // New flag to control grid visibility.
+    private var showGrid = true
+
+    // Reference to the drawing (map) panel.
+    private val drawPanel: JPanel
+
+    // Tick settings for scales.
+    private val tickSpacingWorld = 100f  // world units
+
     init {
         defaultCloseOperation = EXIT_ON_CLOSE
         layout = BorderLayout()
 
-        // Create the drawing panel.
-        val drawPanel = object : JPanel() {
+        // Create the drawing panel for the map.
+        drawPanel = object : JPanel() {
             override fun paintComponent(g: Graphics) {
                 super.paintComponent(g)
                 val g2d = g as Graphics2D
@@ -113,16 +103,25 @@ class Display(
                                 ViewMode.GRADIENT  -> generatedChunks[key]!!.third
                             }
                             g2d.drawImage(image, posX, posY, null)
-                            val oldComposite = g2d.composite
-                            g2d.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.5f)
-                            g2d.color = Color.RED
-                            g2d.drawRect(posX, posY, chunkSize, chunkSize)
-                            g2d.composite = oldComposite
+
+                            if (showGrid) {
+                                val oldComposite = g2d.composite
+                                g2d.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.5f)
+                                g2d.color = Color.RED
+                                g2d.drawRect(posX, posY, chunkSize, chunkSize)
+                                g2d.composite = oldComposite
+                            }
                         } else {
-                            g2d.color = Color.LIGHT_GRAY
-                            g2d.fillRect(posX, posY, chunkSize, chunkSize)
-                            g2d.color = Color.DARK_GRAY
-                            g2d.drawRect(posX, posY, chunkSize, chunkSize)
+                            if (showGrid) {
+                                g2d.color = Color.LIGHT_GRAY
+                                g2d.fillRect(posX, posY, chunkSize, chunkSize)
+                                g2d.color = Color.DARK_GRAY
+                                g2d.drawRect(posX, posY, chunkSize, chunkSize)
+                            } else {
+                                // When grid is hidden, fill the area with a background color.
+                                g2d.color = Color.LIGHT_GRAY
+                                g2d.fillRect(posX, posY, chunkSize, chunkSize)
+                            }
                         }
                     }
                 }
@@ -144,51 +143,69 @@ class Display(
                     g2d.composite = oldComposite
                     g2d.drawRect(rectX.toInt(), rectY.toInt(), rectWidth.toInt(), rectHeight.toInt())
                 }
-
-                // Now draw the coordinate scales as an overlay.
-                // Create a copy of the graphics context and reset the transform.
-                val gOrig = g.create() as Graphics2D
-                gOrig.setTransform(AffineTransform())
-                val margin = 20
-                val panelW = this.width
-                val panelH = this.height
-                gOrig.color = Color.BLACK
-
-                // --- Horizontal Scale (Bottom) ---
-                // Draw a horizontal line above the bottom margin.
-                gOrig.drawLine(0, panelH - margin, panelW, panelH - margin)
-                // Use tick spacing in world units (here chosen as 100; adjust if needed).
-                val tickSpacingWorld = 100f
-                // Compute visible world coordinates (same as before).
-                val visibleWorldMinX = -offsetX / zoomFactor
-                val visibleWorldMaxX = (panelW - offsetX) / zoomFactor
-                // Determine the starting tick (round up to the next multiple).
-                var tickX = ceil(visibleWorldMinX / tickSpacingWorld) * tickSpacingWorld
-                while (tickX <= visibleWorldMaxX) {
-                    // Convert world coordinate tickX into screen coordinate.
-                    val screenX = tickX * zoomFactor + offsetX
-                    gOrig.drawLine(screenX.toInt(), panelH - margin - 5, screenX.toInt(), panelH - margin + 5)
-                    gOrig.drawString(tickX.toInt().toString(), screenX.toInt() - 10, panelH - 5)
-                    tickX += tickSpacingWorld
-                }
-
-                // --- Vertical Scale (Right) ---
-                gOrig.drawLine(panelW - margin, 0, panelW - margin, panelH)
-                val visibleWorldMinY = -offsetY / zoomFactor
-                val visibleWorldMaxY = (panelH - offsetY) / zoomFactor
-                var tickY = ceil(visibleWorldMinY / tickSpacingWorld) * tickSpacingWorld
-                while (tickY <= visibleWorldMaxY) {
-                    val screenY = tickY * zoomFactor + offsetY
-                    gOrig.drawLine(panelW - margin - 5, screenY.toInt(), panelW - margin + 5, screenY.toInt())
-                    gOrig.drawString(tickY.toInt().toString(), panelW - margin + 5, screenY.toInt() + 5)
-                    tickY += tickSpacingWorld
-                }
-                gOrig.dispose()
             }
         }
         drawPanel.preferredSize = Dimension(800, 600)
 
-        // Mouse listeners for chunk generation and panning.
+        // Create a dedicated horizontal scale panel (for the bottom).
+        val horizontalScalePanel = object : JPanel() {
+            init {
+                preferredSize = Dimension(drawPanel.preferredSize.width, 30)
+            }
+            override fun paintComponent(g: Graphics) {
+                super.paintComponent(g)
+                val g2d = g as Graphics2D
+                g2d.color = Color.WHITE
+                g2d.fillRect(0, 0, width, height)
+                g2d.color = Color.BLACK
+
+                val panelW = drawPanel.width
+                val visibleWorldMinX = -offsetX / zoomFactor
+                val visibleWorldMaxX = (panelW - offsetX) / zoomFactor
+
+                val margin = 5
+                g2d.drawLine(0, margin, width, margin)
+
+                var tickX = ceil(visibleWorldMinX / tickSpacingWorld) * tickSpacingWorld
+                while (tickX <= visibleWorldMaxX) {
+                    val screenX = (tickX * zoomFactor + offsetX).toInt()
+                    g2d.drawLine(screenX, margin - 5, screenX, margin + 5)
+                    g2d.drawString(tickX.toInt().toString(), screenX - 10, margin + 20)
+                    tickX += tickSpacingWorld
+                }
+            }
+        }
+
+        // Create a dedicated vertical scale panel (for the right side).
+        val verticalScalePanel = object : JPanel() {
+            init {
+                preferredSize = Dimension(50, drawPanel.preferredSize.height)
+            }
+            override fun paintComponent(g: Graphics) {
+                super.paintComponent(g)
+                val g2d = g as Graphics2D
+                g2d.color = Color.WHITE
+                g2d.fillRect(0, 0, width, height)
+                g2d.color = Color.BLACK
+
+                val panelH = drawPanel.height
+                val visibleWorldMinY = -offsetY / zoomFactor
+                val visibleWorldMaxY = (panelH - offsetY) / zoomFactor
+
+                val margin = 5
+                g2d.drawLine(margin, 0, margin, height)
+
+                var tickY = ceil(visibleWorldMinY / tickSpacingWorld) * tickSpacingWorld
+                while (tickY <= visibleWorldMaxY) {
+                    val screenY = (tickY * zoomFactor + offsetY).toInt()
+                    g2d.drawLine(margin - 5, screenY, margin + 5, screenY)
+                    g2d.drawString(tickY.toInt().toString(), margin + 8, screenY + 5)
+                    tickY += tickSpacingWorld
+                }
+            }
+        }
+
+        // Add mouse listeners to drawPanel (for panning, chunk generation, etc.).
         drawPanel.addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) {
                 when (e.button) {
@@ -235,7 +252,7 @@ class Display(
                                 }
                             }
                             isSelecting = false
-                            drawPanel.repaint()
+                            repaintAllPanels()
                         }
                     }
                 }
@@ -246,7 +263,7 @@ class Display(
                 if ((e.modifiersEx and MouseEvent.BUTTON1_DOWN_MASK) != 0) {
                     leftDragCurrentX = e.x
                     leftDragCurrentY = e.y
-                    drawPanel.repaint()
+                    repaintAllPanels()
                 }
                 if ((e.modifiersEx and MouseEvent.BUTTON3_DOWN_MASK) != 0) {
                     val dx = e.x - lastDragX
@@ -255,7 +272,7 @@ class Display(
                     offsetY += dy
                     lastDragX = e.x
                     lastDragY = e.y
-                    drawPanel.repaint()
+                    repaintAllPanels()
                 }
             }
         })
@@ -266,7 +283,7 @@ class Display(
                 zoomFactor *= zoomChange
                 offsetX = e.x - ((e.x - offsetX) / oldZoom) * zoomFactor
                 offsetY = e.y - ((e.y - offsetY) / oldZoom) * zoomFactor
-                drawPanel.repaint()
+                repaintAllPanels()
             }
         })
 
@@ -274,17 +291,23 @@ class Display(
         val grayButton = JButton("Grayscale View")
         grayButton.addActionListener {
             viewMode = ViewMode.GRAYSCALE
-            drawPanel.repaint()
+            repaintAllPanels()
         }
         val colorButton = JButton("Color View")
         colorButton.addActionListener {
             viewMode = ViewMode.COLOR
-            drawPanel.repaint()
+            repaintAllPanels()
         }
         val gradientButton = JButton("Gradient View")
         gradientButton.addActionListener {
             viewMode = ViewMode.GRADIENT
-            drawPanel.repaint()
+            repaintAllPanels()
+        }
+        // New button to toggle grid visibility.
+        val toggleGridButton = JButton("Toggle Grid")
+        toggleGridButton.addActionListener {
+            showGrid = !showGrid
+            repaintAllPanels()
         }
         // Button to show the global map in the current view mode.
         val showGlobalButton = JButton("Show Global Map")
@@ -308,25 +331,33 @@ class Display(
             mapFrame.setLocationRelativeTo(null)
             mapFrame.isVisible = true
         }
+        // Arrange buttons in the top panel.
         val topPanel = JPanel().apply {
             add(grayButton)
             add(colorButton)
             add(gradientButton)
+            add(toggleGridButton)   // <-- new grid toggle button added here.
             add(showGlobalButton)
         }
 
+        // Set up the layout: top for buttons, center for map, south for horizontal scale, east for vertical scale.
         add(topPanel, BorderLayout.NORTH)
         add(drawPanel, BorderLayout.CENTER)
+        add(horizontalScalePanel, BorderLayout.SOUTH)
+        add(verticalScalePanel, BorderLayout.EAST)
         pack()
         setLocationRelativeTo(null)
         isVisible = true
     }
 
-    /**
-     * Generates the chunk at (chunkX, chunkY) if not already generated.
-     * Uses noise.generateChunkNoiseAndGradient to get both the height map and gradient map.
-     * Creates three images for display and updates the global maps.
-     */
+    // Helper to repaint all panels.
+    private fun repaintAllPanels() {
+        drawPanel.repaint()
+        this.repaint()
+    }
+
+    // --- (Keep the rest of your helper functions unchanged) ---
+
     private fun generateChunkIfNeeded(chunkX: Int, chunkY: Int) {
         val key = Pair(chunkX, chunkY)
         if (!generatedChunks.containsKey(key)) {
@@ -366,9 +397,6 @@ class Display(
         }
     }
 
-    /**
-     * Copies chunk noise data into Map.height_map.
-     */
     private fun updateMapHeightMap(chunkX: Int, chunkY: Int, chunkNoise: Array<IntArray>) {
         val offsetXInMap = (chunkX - map.minChunkX) * chunkSize
         val offsetYInMap = (chunkY - map.minChunkY) * chunkSize
@@ -379,10 +407,6 @@ class Display(
         }
     }
 
-    /**
-     * Copies chunk gradient data into Map.gradiant_map.
-     * The gradient is converted to a color (red for dx, blue for dy).
-     */
     private fun updateMapGradientMap(chunkX: Int, chunkY: Int, chunkGradient: Array<Array<Pair<Float, Float>>>) {
         val offsetXInMap = (chunkX - map.minChunkX) * chunkSize
         val offsetYInMap = (chunkY - map.minChunkY) * chunkSize
@@ -396,10 +420,6 @@ class Display(
         }
     }
 
-    /**
-     * Updates the global map bounds for both height_map and gradiant_map.
-     * If the bounds change, reallocates the arrays and copies existing data.
-     */
     private fun updateGlobalMapBounds(newMinCX: Int, newMaxCX: Int, newMinCY: Int, newMaxCY: Int) {
         if (map.height_map.isEmpty()) {
             map.minChunkX = newMinCX
@@ -443,9 +463,6 @@ class Display(
         }
     }
 
-    /**
-     * Creates a BufferedImage from Map.height_map for grayscale global map.
-     */
     private fun createGlobalHeightMapImage(): BufferedImage {
         if (map.height_map.isEmpty()) throw IllegalStateException("Global height map is empty")
         val rows = map.height_map.size
@@ -460,9 +477,6 @@ class Display(
         return image
     }
 
-    /**
-     * Creates a BufferedImage from Map.gradiant_map for global gradient map.
-     */
     private fun createGlobalGradientMapImage(): BufferedImage {
         if (map.gradiant_map.isEmpty()) throw IllegalStateException("Global gradient map is empty")
         val rows = map.gradiant_map.size
@@ -476,9 +490,6 @@ class Display(
         return image
     }
 
-    /**
-     * Creates a BufferedImage for global color map (converting height_map values).
-     */
     private fun createGlobalColorMapImage(): BufferedImage {
         if (map.height_map.isEmpty()) throw IllegalStateException("Global height map is empty")
         val rows = map.height_map.size
