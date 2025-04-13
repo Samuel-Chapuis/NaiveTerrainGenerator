@@ -1,35 +1,22 @@
 package Noise.Utile
 
 /**
- * Computes the gradient of a height map (noise map) using finite differences.
+ * Fade function for smooth interpolation.
  *
- * For every pixel, the gradient is approximated by the partial derivatives in x and y.
- * Central differences are used for inner pixels, with forward/backward differences
- * for edge pixels.
+ * Implements the 6t^5 - 15t^4 + 10t^3 function.
  *
- * @param heightMap A 2D array of noise values (each between 0 and 255).
- * @return A 2D array of Pairs, where each Pair contains (gradientX, gradientY).
+ * @param t A value typically in [0, 1].
+ * @return The smoothly interpolated value.
  */
-fun computeGradient(heightMap: Array<IntArray>): Array<Array<Pair<Float, Float>>> {
-    val rows = heightMap.size
-    val cols = heightMap[0].size
-    val gradientMap = Array(rows) { Array(cols) { Pair(0f, 0f) } }
-    for (y in 0 until rows) {
-        for (x in 0 until cols) {
-            // Compute x-derivative: use forward difference on left edge, backward on right edge, and central otherwise.
-            val dx = when (x) {
-                0 -> (heightMap[y][x + 1] - heightMap[y][x]).toFloat()
-                cols - 1 -> (heightMap[y][x] - heightMap[y][x - 1]).toFloat()
-                else -> ((heightMap[y][x + 1] - heightMap[y][x - 1]) / 2f)
-            }
-            // Compute y-derivative similarly.
-            val dy = when (y) {
-                0 -> (heightMap[y + 1][x] - heightMap[y][x]).toFloat()
-                rows - 1 -> (heightMap[y][x] - heightMap[y - 1][x]).toFloat()
-                else -> ((heightMap[y + 1][x] - heightMap[y - 1][x]) / 2f)
-            }
-            gradientMap[y][x] = Pair(dx, dy)
-        }
-    }
-    return gradientMap
-}
+fun fade(t: Float): Float = t * t * t * (t * (t * 6f - 15f) + 10f)
+
+
+/*
+ * Linearly interpolates between values a and b using factor t.
+ *
+ * @param a The start value.
+ * @param b The end value.
+ * @param t The interpolation parameter (0 ≤ t ≤ 1).
+ * @return The interpolated value.
+ */
+fun lerp(a: Float, b: Float, t: Float): Float = a + t * (b - a)

@@ -7,8 +7,8 @@ fun main() {
 
     val seed = 3
     val size = 1000   // Size value used by your Noise class.
-    val ChunkGenerator = Chunk(size, seed)
+    val chunkGenerator = ChunkGenerator(size, seed)
     SwingUtilities.invokeLater {
-        Display(ChunkGenerator, seed, map)
+        Display(chunkGenerator, seed, map)
     }
 }

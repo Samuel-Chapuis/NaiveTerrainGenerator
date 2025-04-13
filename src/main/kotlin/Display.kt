@@ -41,7 +41,7 @@ enum class ViewMode {
  * @param chunkSize The size (in pixels) of each chunk.
  */
 class Display(
-    private val noise: Noise,
+    private val chunkGenerator: ChunkGenerator,
     private val seed: Int,
     private val map: Map,
     private val chunkSize: Int = 16
@@ -298,7 +298,7 @@ class Display(
         val key = Pair(chunkX, chunkY)
         if (!generatedChunks.containsKey(key)) {
             // Obtain both noise and gradient using the Noise class.
-            val (chunkNoise, chunkGradient) = noise.generateChunkNoiseAndGradient(
+            val (chunkNoise, chunkGradient) = chunkGenerator.generateChunkNoiseAndGradient(
                 chunkX = chunkX,
                 chunkY = chunkY,
                 seed = seed,
