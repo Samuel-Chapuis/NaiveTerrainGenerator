@@ -1,5 +1,5 @@
-import java.awt.Color
-import java.awt.image.BufferedImage
+
+import DisplayPack.Display
 import javax.swing.SwingUtilities
 
 fun main() {
