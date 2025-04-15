@@ -6,9 +6,7 @@ import java.awt.AlphaComposite
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
-import java.awt.Graphics
 import java.awt.Graphics2D
-import java.awt.geom.AffineTransform
 import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
@@ -23,7 +21,7 @@ import kotlin.math.min
 /**
  * Display creates the main application frame.
  * It holds shared state (pan, zoom, view mode, etc.) and helper methods (for chunk generation, updating maps, and creating global images).
- * It instantiates the MapPanel, the scale panels, and creates the control buttons.
+ * It instantiates the MapPanel, scale panels, and creates the control buttons.
  */
 class Display(
     val chunkGenerator: ChunkGenerator,
@@ -39,7 +37,8 @@ class Display(
     var viewMode = ViewMode.GRAYSCALE
     var showGrid = true
 
-    // Cache: store generated chunk images keyed by (chunkX, chunkY)
+    // Cache: store generated chunk images keyed by (chunkX, chunkY).
+    // The Triple holds: (grayscale image, color image with contour overlay, gradient image)
     val generatedChunks = mutableMapOf<Pair<Int, Int>, Triple<BufferedImage, BufferedImage, BufferedImage>>()
 
     // Variables for mouse-drag selection.
@@ -98,10 +97,14 @@ class Display(
         val exportButton = JButton("Export Global Map").apply {
             addActionListener {
                 // Create the global map image based on the current view mode.
-                val globalImage = when (viewMode) {
+                var globalImage: BufferedImage = when (viewMode) {
                     ViewMode.GRAYSCALE -> createGlobalHeightMapImage()
                     ViewMode.COLOR     -> createGlobalColorMapImage()
                     ViewMode.GRADIENT  -> createGlobalGradientMapImage()
+                }
+                // In COLOR view, overlay contour lines.
+                if (viewMode == ViewMode.COLOR) {
+                    globalImage = applyContourLines(globalImage, map.height_map)
                 }
                 // Save the global image as a JPEG in the "out" folder.
                 try {
@@ -144,12 +147,13 @@ class Display(
     }
 
     /**
-     * Helper: returns the RGB for gray given a value.
+     * Helper: returns the RGB for a gray color given a value.
      */
     private fun getGrayColor(value: Int): Int = Color(value, value, value).rgb
 
     /**
      * Helper: maps a height value to a color.
+     * This is the basic mapping used when generating chunk images.
      */
     private fun getColorMap(value: Int): Int = when (value) {
         in 0..32   -> Color(0, 0, 150).rgb
@@ -161,7 +165,7 @@ class Display(
     }
 
     /**
-     * Helper: generates an image given width and height and a lambda to calculate each pixel.
+     * Generic helper: generates an image given width and height and a lambda to calculate each pixel.
      */
     private fun createImage(width: Int, height: Int, pixelGenerator: (i: Int, j: Int) -> Int): BufferedImage {
         val image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
@@ -172,7 +176,75 @@ class Display(
     }
 
     /**
+     * Creates an image with alpha support.
+     *
+     * In order to allow transparent overlay, we use BufferedImage.TYPE_INT_ARGB.
+     */
+    private fun createARGBImage(width: Int, height: Int, pixelGenerator: (i: Int, j: Int) -> Int): BufferedImage {
+        val image = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
+        for (i in 0 until height) {
+            for (j in 0 until width) {
+                image.setRGB(j, i, pixelGenerator(i, j))
+            }
+        }
+        return image
+    }
+
+    /**
+     * Applies transparent contour lines over the provided image.
+     *
+     * For each pixel, the function checks its left, right, top, and bottom neighbors.
+     * If any neighbor’s height is an exact multiple of 10 and the current pixel’s height equals that neighbor’s height plus 1,
+     * then the pixel is blended with transparent black (using the given alpha, e.g. 0.5f) rather than replaced outright.
+     *
+     * @param image   The image to overlay the contour lines.
+     * @param heightMap The height map whose dimensions match the image.
+     * @param alpha   The blending factor; for example, 0.5f gives 50% opacity for the contour overlay.
+     */
+    private fun applyContourLines(image: BufferedImage, heightMap: Array<IntArray>, alpha: Float = 0.5f): BufferedImage {
+        val rows = heightMap.size
+        val cols = heightMap[0].size
+        // For each pixel in the height map, check all four neighbors.
+        for (i in 0 until rows) {
+            for (j in 0 until cols) {
+                val current = heightMap[i][j]
+                var shouldBlend = false
+                // Check left neighbor.
+                if (j > 0 && (current - heightMap[i][j - 1] == 1 && heightMap[i][j - 1] % 10 == 0))
+                    shouldBlend = true
+                // Check right neighbor.
+                if (j < cols - 1 && (current - heightMap[i][j + 1] == 1 && heightMap[i][j + 1] % 10 == 0))
+                    shouldBlend = true
+                // Check top neighbor.
+                if (i > 0 && (current - heightMap[i - 1][j] == 1 && heightMap[i - 1][j] % 10 == 0))
+                    shouldBlend = true
+                // Check bottom neighbor.
+                if (i < rows - 1 && (current - heightMap[i + 1][j] == 1 && heightMap[i + 1][j] % 10 == 0))
+                    shouldBlend = true
+
+                if (shouldBlend) {
+                    // Retrieve the original color.
+                    val origRGB = image.getRGB(j, i)
+                    val origColor = Color(origRGB, true)
+                    // Blend with black: new_color = orig_color * (1 - alpha) + black * alpha.
+                    // Since black is (0,0,0), the new value is just orig_color multiplied by (1 - alpha)
+                    val newRed = (origColor.red * (1 - alpha)).toInt().coerceIn(0, 255)
+                    val newGreen = (origColor.green * (1 - alpha)).toInt().coerceIn(0, 255)
+                    val newBlue = (origColor.blue * (1 - alpha)).toInt().coerceIn(0, 255)
+                    // Preserve the original alpha.
+                    val blended = Color(newRed, newGreen, newBlue, origColor.alpha).rgb
+                    image.setRGB(j, i, blended)
+                }
+            }
+        }
+        return image
+    }
+
+
+    /**
      * Generates chunk images if they don't already exist.
+     * For the color view, after generating the basic image from getColorMap,
+     * we overlay contour lines using the chunk's height data.
      */
     fun generateChunkIfNeeded(chunkX: Int, chunkY: Int) {
         val key = Pair(chunkX, chunkY)
@@ -184,7 +256,9 @@ class Display(
                 chunkSize = chunkSize
             )
             val grayImg = createImage(chunkSize, chunkSize) { i, j -> getGrayColor(chunkNoise[i][j]) }
-            val colorImg = createImage(chunkSize, chunkSize) { i, j -> getColorMap(chunkNoise[i][j]) }
+            // Generate the basic color image.
+            val basicColorImg = createARGBImage(chunkSize, chunkSize) { i, j -> getColorMap(chunkNoise[i][j]) }
+            val colorImg = applyContourLines(basicColorImg, chunkNoise)
             val gradImg = createImage(chunkSize, chunkSize) { i, j ->
                 val (dx, dy) = chunkGradient[i][j]
                 val red = (((dx + 1) / 2) * 255).toInt().coerceIn(0, 255)
@@ -265,7 +339,6 @@ class Display(
         if (map.height_map.isEmpty()) throw IllegalStateException("Global height map is empty")
         val rows = map.height_map.size
         val cols = map.height_map[0].size
-        // Use our generic image creator with the getGrayColor function.
         return createImage(cols, rows) { i, j -> getGrayColor(map.height_map[i][j]) }
     }
 
@@ -280,6 +353,8 @@ class Display(
         if (map.height_map.isEmpty()) throw IllegalStateException("Global height map is empty")
         val rows = map.height_map.size
         val cols = map.height_map[0].size
-        return createImage(cols, rows) { i, j -> getColorMap(map.height_map[i][j]) }
+        val basicImage = createARGBImage(cols, rows) { i, j -> getColorMap(map.height_map[i][j]) }
+        return applyContourLines(basicImage, map.height_map)
     }
+
 }
