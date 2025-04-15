@@ -4,12 +4,16 @@ import Noise.Utile.perlin2D
 
 // Refactored Noise class.
 class ChunkGenerator(
-    var size: Int,             // Overall noise size (can be used in offsets if needed).
-    var seed: Int,             // Seed to ensure reproducibility.
-    val octaves: Int = 4,      // Number of octaves to combine.
-    val persistence: Float = 0.4f,  // Amplitude reduction per octave.
-    val lacunarity: Float = 2.5f    // Frequency increase per octave.
+    var seed: Int = 1,
+    var chunkSize: Int = 16,
+    var scale: Float = 0.002f,
+    var octaves: Int = 4,
+    var persistence: Float = 0.4f,
+    var lacunarity: Float = 2.5f,
+    var warpFactor: Float = 0.5f,
+    var mean: Int = 64,
 ) {
+
     /**
      * Generates a chunk of noise as a 2D array of grayscale values (0–255).
      *
@@ -37,49 +41,32 @@ class ChunkGenerator(
     fun generateChunkNoise(
         chunkX: Int,
         chunkY: Int,
-        seed: Int,
-        chunkSize: Int = 16,
-        scale: Float = 0.05f,
+        seed: Int = this.seed,
+        chunkSize: Int = this.chunkSize,
+        scale: Float = this.scale,
         octaves: Int = this.octaves,
         persistence: Float = this.persistence,
         lacunarity: Float = this.lacunarity,
-        mean: Int = 64,
-        warpFactor: Float = 0.5f
+        mean: Int = this.mean,
     ): Array<IntArray> {
         val noiseArray = Array(chunkSize) { IntArray(chunkSize) }
 
         for (y in 0 until chunkSize) {
             for (x in 0 until chunkSize) {
-                var total = 0f
-                var amplitude = 1f
-                var frequency = 1f
-                // Compute the global coordinate of the current pixel.
                 val worldX = chunkX * chunkSize + x
                 val worldY = chunkY * chunkSize + y
 
-                // Accumulate contributions from multiple octaves.
-                repeat(octaves) {
-                    // Scale coordinate for current octave.
-                    val baseX = worldX * scale * frequency
-                    val baseY = worldY * scale * frequency
+                val lowFreq = generateNoiseLayer(worldX, worldY, scale * 0.5f, 2, 0)
+                val midFreq = generateNoiseLayer(worldX, worldY, scale, 3, 10)
+                val highFreq = generateNoiseLayer(worldX, worldY, scale * 2.0f, 4, 20)
 
-                    // Domain warp: compute a displacement (dx, dy) and offset the coordinate.
-                    val (warpedX, warpedY) = domainWarp(baseX, baseY, warpFactor, seed*200)
-
-                    // Sample our Perlin-like noise at the warped coordinate.
-                    val noiseValue = perlin2D(warpedX, warpedY, seed)
-                    total += noiseValue * amplitude
-
-                    amplitude *= persistence
-                    frequency *= lacunarity
-                }
-                // Normalize (assumes noise is roughly in -1..1) to 0..255.
+                val total = lowFreq * 0.5f + midFreq * 0.3f + highFreq * 0.2f
                 val normalized = ((total + 1) / 2 * 255).toInt()
-                // Adjust the brightness around a target mean (here 128 is the mid-point of 0..255).
-                val adjusted = normalized + (mean - 128)
+                val adjusted = normalized + (64 - 128)
                 noiseArray[y][x] = adjusted.coerceIn(0, 255)
             }
         }
+
         return noiseArray
     }
 
@@ -91,18 +78,35 @@ class ChunkGenerator(
     fun generateChunkNoiseAndGradient(
         chunkX: Int,
         chunkY: Int,
-        seed: Int,
-        chunkSize: Int = 16,
-        scale: Float = 0.05f,
+        seed: Int = this.seed,
+        chunkSize: Int = this.chunkSize,
+        scale: Float = this.scale,
         octaves: Int = this.octaves,
         persistence: Float = this.persistence,
         lacunarity: Float = this.lacunarity,
-        mean: Int = 64,
-        warpFactor: Float = 0.5f
+        mean: Int = this.mean,
     ): Pair<Array<IntArray>, Array<Array<Pair<Float, Float>>>> {
-        val noiseMap = generateChunkNoise(chunkX, chunkY, seed, chunkSize, scale, octaves, persistence, lacunarity, mean, warpFactor)
+        val noiseMap = generateChunkNoise(chunkX, chunkY, seed, chunkSize, scale, octaves, persistence, lacunarity, mean)
         val gradientMap = computeGradient(noiseMap)
         return Pair(noiseMap, gradientMap)
     }
 
+
+    private fun generateNoiseLayer(
+        worldX: Int, worldY: Int, scale: Float, octaves: Int, seedOffset: Int
+    ): Float {
+        var total = 0f
+        var amplitude = 1f
+        var frequency = 1f
+        repeat(octaves) {
+            val baseX = worldX * scale * frequency
+            val baseY = worldY * scale * frequency
+            val (warpedX, warpedY) = domainWarp(baseX, baseY, warpFactor, seed * (200 + seedOffset))
+            total += perlin2D(warpedX, warpedY, seed + seedOffset) * amplitude
+
+            amplitude *= persistence
+            frequency *= lacunarity
+        }
+        return total
+    }
 }
