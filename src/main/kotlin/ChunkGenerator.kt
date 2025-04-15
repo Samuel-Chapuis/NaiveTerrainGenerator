@@ -8,7 +8,7 @@ class ChunkGenerator(
     var chunkSize: Int = 16,
     var scale: Float = 0.002f,
     var octaves: Int = 4,
-    var persistence: Float = 0.4f,
+    var persistence: Float = 0.6f,
     var lacunarity: Float = 2.5f,
     var warpFactor: Float = 0.5f,
     var mean: Int = 64,

@@ -1,11 +1,14 @@
 package DisplayPack
 
 import Map
-
 import ChunkGenerator
+import java.awt.AlphaComposite
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.geom.AffineTransform
 import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
@@ -20,7 +23,7 @@ import kotlin.math.min
 /**
  * Display creates the main application frame.
  * It holds shared state (pan, zoom, view mode, etc.) and helper methods (for chunk generation, updating maps, and creating global images).
- * It instantiates the MapPanel and the scale panels, and it also creates the control buttons.
+ * It instantiates the MapPanel, the scale panels, and creates the control buttons.
  */
 class Display(
     val chunkGenerator: ChunkGenerator,
@@ -36,7 +39,7 @@ class Display(
     var viewMode = ViewMode.GRAYSCALE
     var showGrid = true
 
-    // Cache: store generated chunk images keyed by (chunkX, chunkY).
+    // Cache: store generated chunk images keyed by (chunkX, chunkY)
     val generatedChunks = mutableMapOf<Pair<Int, Int>, Triple<BufferedImage, BufferedImage, BufferedImage>>()
 
     // Variables for mouse-drag selection.
@@ -92,15 +95,15 @@ class Display(
                 repaintAllPanels()
             }
         }
-        val showGlobalButton = JButton("Show Global Map").apply {
+        val exportButton = JButton("Export Global Map").apply {
             addActionListener {
-                // Create the global map image.
+                // Create the global map image based on the current view mode.
                 val globalImage = when (viewMode) {
                     ViewMode.GRAYSCALE -> createGlobalHeightMapImage()
                     ViewMode.COLOR     -> createGlobalColorMapImage()
                     ViewMode.GRADIENT  -> createGlobalGradientMapImage()
                 }
-                // Save the global image as a JPEG in the "/out" folder.
+                // Save the global image as a JPEG in the "out" folder.
                 try {
                     val outputDirectory = File("out")
                     if (!outputDirectory.exists()) {
@@ -108,23 +111,10 @@ class Display(
                     }
                     val outputFile = File(outputDirectory, "globalMap_${viewMode.name}.jpg")
                     ImageIO.write(globalImage, "jpg", outputFile)
+                    println("Export successful: ${outputFile.absolutePath}")
                 } catch (ex: Exception) {
                     ex.printStackTrace()
                 }
-                // Open a new frame to display the global image.
-                val mapFrame = JFrame("Global Map - ${viewMode.name}")
-                mapFrame.defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
-                val panel = object : JPanel() {
-                    override fun paintComponent(g: java.awt.Graphics) {
-                        super.paintComponent(g)
-                        g.drawImage(globalImage, 0, 0, null)
-                    }
-                }
-                panel.preferredSize = Dimension(globalImage.width, globalImage.height)
-                mapFrame.add(panel)
-                mapFrame.pack()
-                mapFrame.setLocationRelativeTo(null)
-                mapFrame.isVisible = true
             }
         }
         // Top panel holds all control buttons.
@@ -133,7 +123,7 @@ class Display(
             add(colorButton)
             add(gradientButton)
             add(toggleGridButton)
-            add(showGlobalButton)
+            add(exportButton)
         }
 
         // Add components to main frame.
@@ -153,8 +143,37 @@ class Display(
         repaint()
     }
 
-    // --- Helper functions, similar to your previous implementation ---
+    /**
+     * Helper: returns the RGB for gray given a value.
+     */
+    private fun getGrayColor(value: Int): Int = Color(value, value, value).rgb
 
+    /**
+     * Helper: maps a height value to a color.
+     */
+    private fun getColorMap(value: Int): Int = when (value) {
+        in 0..32   -> Color(0, 0, 150).rgb
+        in 33..64  -> Color(0, 0, 255).rgb
+        in 65..128 -> Color(85, 220, 85).rgb
+        in 129..192-> Color(200, 200, 200).rgb
+        in 193..255-> Color(255, 255, 255).rgb
+        else       -> getGrayColor(value)
+    }
+
+    /**
+     * Helper: generates an image given width and height and a lambda to calculate each pixel.
+     */
+    private fun createImage(width: Int, height: Int, pixelGenerator: (i: Int, j: Int) -> Int): BufferedImage {
+        val image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+        for (i in 0 until height)
+            for (j in 0 until width)
+                image.setRGB(j, i, pixelGenerator(i, j))
+        return image
+    }
+
+    /**
+     * Generates chunk images if they don't already exist.
+     */
     fun generateChunkIfNeeded(chunkX: Int, chunkY: Int) {
         val key = Pair(chunkX, chunkY)
         if (!generatedChunks.containsKey(key)) {
@@ -164,28 +183,13 @@ class Display(
                 seed = seed,
                 chunkSize = chunkSize
             )
-            val grayImg = BufferedImage(chunkSize, chunkSize, BufferedImage.TYPE_INT_RGB)
-            val colorImg = BufferedImage(chunkSize, chunkSize, BufferedImage.TYPE_INT_RGB)
-            val gradImg = BufferedImage(chunkSize, chunkSize, BufferedImage.TYPE_INT_RGB)
-            for (i in 0 until chunkSize) {
-                for (j in 0 until chunkSize) {
-                    val value = chunkNoise[i][j]
-                    val grayRGB = Color(value, value, value).rgb
-                    grayImg.setRGB(j, i, grayRGB)
-                    val colorRGB = when (value) {
-                        in 0..32   -> Color(0, 0, 150).rgb
-                        in 33..64  -> Color(0, 0, 255).rgb
-                        in 65..128 -> Color(85, 220, 85).rgb
-                        in 129..192-> Color(200, 200, 200).rgb
-                        in 193..255-> Color(255, 255, 255).rgb
-                        else       -> grayRGB
-                    }
-                    colorImg.setRGB(j, i, colorRGB)
-                    val (dx, dy) = chunkGradient[i][j]
-                    val red = (((dx + 1) / 2) * 255).toInt().coerceIn(0, 255)
-                    val blue = (((dy + 1) / 2) * 255).toInt().coerceIn(0, 255)
-                    gradImg.setRGB(j, i, Color(red, 0, blue).rgb)
-                }
+            val grayImg = createImage(chunkSize, chunkSize) { i, j -> getGrayColor(chunkNoise[i][j]) }
+            val colorImg = createImage(chunkSize, chunkSize) { i, j -> getColorMap(chunkNoise[i][j]) }
+            val gradImg = createImage(chunkSize, chunkSize) { i, j ->
+                val (dx, dy) = chunkGradient[i][j]
+                val red = (((dx + 1) / 2) * 255).toInt().coerceIn(0, 255)
+                val blue = (((dy + 1) / 2) * 255).toInt().coerceIn(0, 255)
+                Color(red, 0, blue).rgb
             }
             generatedChunks[key] = Triple(grayImg, colorImg, gradImg)
             updateGlobalMapBounds(chunkX, chunkX, chunkY, chunkY)
@@ -261,48 +265,21 @@ class Display(
         if (map.height_map.isEmpty()) throw IllegalStateException("Global height map is empty")
         val rows = map.height_map.size
         val cols = map.height_map[0].size
-        val image = BufferedImage(cols, rows, BufferedImage.TYPE_INT_RGB)
-        for (y in 0 until rows) {
-            for (x in 0 until cols) {
-                val value = map.height_map[y][x]
-                image.setRGB(x, y, Color(value, value, value).rgb)
-            }
-        }
-        return image
+        // Use our generic image creator with the getGrayColor function.
+        return createImage(cols, rows) { i, j -> getGrayColor(map.height_map[i][j]) }
     }
 
     fun createGlobalGradientMapImage(): BufferedImage {
         if (map.gradiant_map.isEmpty()) throw IllegalStateException("Global gradient map is empty")
         val rows = map.gradiant_map.size
         val cols = map.gradiant_map[0].size
-        val image = BufferedImage(cols, rows, BufferedImage.TYPE_INT_RGB)
-        for (y in 0 until rows) {
-            for (x in 0 until cols) {
-                image.setRGB(x, y, map.gradiant_map[y][x])
-            }
-        }
-        return image
+        return createImage(cols, rows) { i, j -> map.gradiant_map[i][j] }
     }
 
     fun createGlobalColorMapImage(): BufferedImage {
         if (map.height_map.isEmpty()) throw IllegalStateException("Global height map is empty")
         val rows = map.height_map.size
         val cols = map.height_map[0].size
-        val image = BufferedImage(cols, rows, BufferedImage.TYPE_INT_RGB)
-        for (y in 0 until rows) {
-            for (x in 0 until cols) {
-                val value = map.height_map[y][x]
-                val colorRGB = when (value) {
-                    in 0..32   -> Color(0, 0, 150).rgb
-                    in 33..64  -> Color(0, 0, 255).rgb
-                    in 65..128 -> Color(85, 220, 85).rgb
-                    in 129..192-> Color(200, 200, 200).rgb
-                    in 193..255-> Color(255, 255, 255).rgb
-                    else       -> Color(value, value, value).rgb
-                }
-                image.setRGB(x, y, colorRGB)
-            }
-        }
-        return image
+        return createImage(cols, rows) { i, j -> getColorMap(map.height_map[i][j]) }
     }
 }
