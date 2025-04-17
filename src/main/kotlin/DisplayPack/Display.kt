@@ -2,11 +2,9 @@ package DisplayPack
 
 import Map
 import ChunkGenerator
-import java.awt.AlphaComposite
-import java.awt.BorderLayout
-import java.awt.Color
-import java.awt.Dimension
-import java.awt.Graphics2D
+import java.awt.*
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
@@ -94,6 +92,11 @@ class Display(
                 repaintAllPanels()
             }
         }
+
+        val histButton = JButton("Show Height Distribution").apply {
+            addActionListener { showHeightDistribution() }
+        }
+
         val exportButton = JButton("Export Global Map").apply {
             addActionListener {
                 // Create the global map image based on the current view mode.
@@ -126,6 +129,7 @@ class Display(
             add(colorButton)
             add(gradientButton)
             add(toggleGridButton)
+            add(histButton)
             add(exportButton)
         }
 
@@ -145,6 +149,168 @@ class Display(
         mapPanel.repaint()
         repaint()
     }
+
+
+    private fun showHeightDistribution() {
+        // Count non‑zero points only
+        val rows = map.height_map.size
+        val cols = map.height_map[0].size
+        val counts = DoubleArray(256) { 0.0 }
+        var totalPoints = 0
+
+        for (y in 0 until rows) {
+            for (x in 0 until cols) {
+                val h = map.height_map[y][x].coerceIn(0, 255)
+                if (h == 0) continue                // ← skip zeros
+                counts[h] += 1.0
+                totalPoints++
+            }
+        }
+        if (totalPoints == 0) return             // nothing to show
+
+        // Normalize over non‑zero points
+        val proportions = counts.map { it / totalPoints }.toDoubleArray()
+
+        // Build and show the histogram frame as before
+        val frame = JFrame("Height Distribution (excluding 0)")
+        frame.defaultCloseOperation = JFrame.DISPOSE_ON_CLOSE
+        frame.contentPane.add(HistogramPanel(proportions))
+        frame.setSize(800, 400)
+        frame.setLocationRelativeTo(this)
+        frame.isVisible = true
+    }
+
+    class HistogramPanel(data: DoubleArray) : JPanel() {
+        private val proportions = data
+        private var zoom = 1.0
+        private var offsetX = 0.0
+        private var offsetY = 0.0
+        private var lastDragX = 0
+        private var lastDragY = 0
+
+        // Precompute quartiles & mean
+        private val cum = DoubleArray(proportions.size).also { arr ->
+            proportions.foldIndexed(0.0) { i, acc, v -> arr[i] = acc + v; acc + v }
+        }
+        private val q1 = cum.indexOfFirst { it >= 0.25 }.coerceAtLeast(0)
+        private val median = cum.indexOfFirst { it >= 0.5 }.coerceAtLeast(0)
+        private val q3 = cum.indexOfFirst { it >= 0.75 }.coerceAtLeast(0)
+        private val mean = proportions.mapIndexed { i, v -> i * v }.sum()
+
+        init {
+            // Mouse wheel zoom
+            addMouseWheelListener { e ->
+                val factor = if (e.wheelRotation < 0) 1.1 else 1/1.1
+                val px = e.x.toDouble(); val py = e.y.toDouble()
+                offsetX = px - factor * (px - offsetX)
+                offsetY = py - factor * (py - offsetY)
+                zoom *= factor
+                repaint()
+            }
+            // Mouse press for drag
+            addMouseListener(object : MouseAdapter() {
+                override fun mousePressed(e: MouseEvent) {
+                    lastDragX = e.x; lastDragY = e.y
+                }
+            })
+            // Mouse drag => pan
+            addMouseMotionListener(object : MouseAdapter() {
+                override fun mouseDragged(e: MouseEvent) {
+                    offsetX += (e.x - lastDragX)
+                    offsetY += (e.y - lastDragY)
+                    lastDragX = e.x; lastDragY = e.y
+                    repaint()
+                }
+            })
+        }
+
+        override fun paintComponent(g: Graphics) {
+            super.paintComponent(g)
+            val g2 = g as Graphics2D
+            val w = width; val h = height
+            val marginLeft = 40.0
+            val marginBottom = 30.0
+            val usableHeight = h - 50.0
+            val usableWidth = w - marginLeft - 10.0
+            val barWidth = usableWidth / proportions.size
+
+            // Find the maximum proportion to rescale bars
+            val maxProp = proportions.maxOrNull()!!.coerceAtLeast(1e-9)
+
+            // Save transform, apply zoom & pan
+            val origTx = g2.transform
+            g2.translate(offsetX, offsetY)
+            g2.scale(zoom, zoom)
+
+            // Draw axes
+            g2.color = Color.DARK_GRAY
+            g2.drawLine(
+                marginLeft.toInt(), 10,
+                marginLeft.toInt(), (h - marginBottom).toInt()
+            )
+            g2.drawLine(
+                marginLeft.toInt(), (h - marginBottom).toInt(),
+                w - 10, (h - marginBottom).toInt()
+            )
+
+            // Draw bars (rescaled)
+            proportions.forEachIndexed { i, prop ->
+                val norm = prop / maxProp
+                val barHeight = (norm * usableHeight).toInt()
+                val x = (marginLeft + i * barWidth).toInt()
+                val y = (h - marginBottom).toInt() - barHeight
+                g2.color = Color.BLUE
+                g2.fillRect(x, y, barWidth.toInt(), barHeight)
+            }
+
+            // Draw quartile dashed lines
+            val dash = floatArrayOf(5f, 5f)
+            g2.stroke = BasicStroke(2f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_BEVEL, 0f, dash, 0f)
+            g2.color = Color.RED
+            listOf(q1, median, q3).forEach { q ->
+                val x = (marginLeft + q * barWidth).toInt()
+                g2.drawLine(x, 10, x, (h - marginBottom).toInt())
+            }
+
+            // Draw mean solid line
+            g2.stroke = BasicStroke(2f)
+            g2.color = Color.ORANGE
+            val meanX = (marginLeft + mean * barWidth).toInt()
+            g2.drawLine(meanX, 10, meanX, (h - marginBottom).toInt())
+
+            // Restore transform & stroke
+            g2.transform = origTx
+            g2.stroke = BasicStroke()
+
+            // --- Draw Y‑axis grid lines and labels ---
+            g2.color = Color.LIGHT_GRAY
+            for (i in 0..4) {
+                val yy = (h - marginBottom - i * usableHeight / 4).toInt()
+                g2.drawLine(marginLeft.toInt(), yy, (w - 10), yy)
+            }
+            g2.color = Color.BLACK
+            for (i in 0..4) {
+                val yy = (h - marginBottom - i * usableHeight / 4).toInt() + 5
+                g2.drawString("${i * 25}%", 5, yy)
+            }
+
+            // X‑axis labels every 50 units
+            for (i in 0 until proportions.size step 50) {
+                val x = (marginLeft + i * barWidth).toInt()
+                g2.drawString("$i", x, h - 10)
+            }
+
+            // Y‑axis title
+            g2.drawString("Relative %", 5, 20)
+
+            // Legend
+            g2.color = Color.RED
+            g2.drawString("Q1  Median  Q3", (marginLeft + 10).toInt(), 20)
+            g2.color = Color.ORANGE
+            g2.drawString("Mean", (marginLeft + 150).toInt(), 20)
+        }
+    }
+
 
     /**
      * Helper: returns the RGB for a gray color given a value.
