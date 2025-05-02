@@ -323,8 +323,8 @@ class Display(
      */
     private fun getColorMap(value: Int): Int = when (value) {
         in 0..32   -> Color(0, 0, 150).rgb
-        in 33..64  -> Color(0, 0, 255).rgb
-        in 65..128 -> Color(85, 220, 85).rgb
+        in 33..64  -> Color((value-33)*2, (value-33)*2, 255).rgb
+        in 65..128 -> Color(85 , 255-(value-65)*3, 85 ).rgb
         in 129..192-> Color(200, 200, 200).rgb
         in 193..255-> Color(255, 255, 255).rgb
         else       -> getGrayColor(value)

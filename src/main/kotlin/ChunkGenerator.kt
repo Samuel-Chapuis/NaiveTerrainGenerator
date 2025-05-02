@@ -42,7 +42,7 @@ class ChunkGenerator(
         val lacunarity = 2.5f
         val maxValue = 255f
         val minValue = 0f
-        val meanTarget = 64f
+        val meanTarget = 68f
 
         val lowFreq = generateNoiseLayer(
             worldX, worldY,
