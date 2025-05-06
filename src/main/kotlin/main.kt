@@ -1,9 +1,13 @@
 
 import DisplayPack.Display
 import Minecraft.mapWorkshop
+import Minecraft.util.inspectLevelDat
+import java.io.File
 import javax.swing.SwingUtilities
 
 fun main() {
+
+//    HEIGHT MAP GENERATION
 //    val map = Map()
 //
 //    val seed = 3
@@ -13,5 +17,10 @@ fun main() {
 //        Display(chunkGenerator, seed, map)
 //    }
 
+//    MINECRAFT MAP GENERATION
     mapWorkshop()
+
+//    UTIL
+//    val levelFile = "src/main/resources/inputs/level.dat"
+//    inspectLevelDat(levelFile)
 }

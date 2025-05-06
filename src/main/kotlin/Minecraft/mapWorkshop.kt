@@ -4,13 +4,11 @@ import org.jglrxavpok.hephaistos.data.RandomAccessFileSource
 import org.jglrxavpok.hephaistos.mca.BlockState
 import org.jglrxavpok.hephaistos.mca.RegionFile
 import org.jglrxavpok.hephaistos.nbt.*
-import java.io.BufferedInputStream
-import java.io.File
-import java.io.RandomAccessFile
+import java.io.*
 
 fun mapWorkshop() {
     // 1. Prépare le dossier world "ma_carte_personalisé" et le sous-dossier "region"
-    val worldDir = File("ma_carte_personalisé")
+    val worldDir  = File("out", "ma_carte_personalisé")
     val regionDir = File(worldDir, "region")
     if (!regionDir.exists()) regionDir.mkdirs()
 
@@ -77,21 +75,60 @@ fun mapWorkshop() {
     }
 
     // 8. Écriture d’un level.dat minimal dans worldDir
-    val levelDat: NBTCompound = NBT.Compound { root ->
+    generateLevelDatFromTemplate(
+        templateResourcePath = "inputs/level.dat",
+        worldDir            = worldDir,
+        newWorldName        = "ma_carte_personalisé"
+    )
+
+}
+
+
+
+fun generateLevelDatFromTemplate(
+    templateResourcePath: String, // ex. "inputs/level.dat"
+    worldDir: File,
+    newWorldName: String
+) {
+    // 1) Charger le template existant
+    val inStream = Thread.currentThread()
+        .contextClassLoader
+        .getResourceAsStream(templateResourcePath)
+        ?: error("Ressource introuvable : $templateResourcePath")
+
+    val templateRoot = NBTReader(BufferedInputStream(inStream)).use { it.read() } as NBTCompound
+
+    // 2) Reconstruire un nouveau compound en copiant tout, puis override
+    val patched = NBT.Compound { root ->
+        // Copier toutes les entrées du template
+        templateRoot.entries.forEach { (name, tag) ->
+            root.put(name, tag)
+        }
+
+        // Maintenant, on remplace **entièrement** le sous-compound "Data"
+        // par un nouveau builder qui reprend tout de l'ancien et applique nos changements.
+        val oldData = templateRoot["Data"] as? NBTCompound
+            ?: error("Le template n’a pas de Data compound")
+
         root.put("Data", NBT.Compound { data ->
-            // utilisez ici les classes NBTInt, NBTLong, NBTString
-            data.put("DataVersion", NBTInt(2865))
-            data.put("LevelName", NBTString("ma_carte_personalisé"))
+            // copie entière de Data
+            oldData.entries.forEach { (n, t) ->
+                data.put(n, t)
+            }
+            // nos overrides
+            data.put("LevelName",  NBTString(newWorldName))
             data.put("RandomSeed", NBTLong(System.currentTimeMillis()))
-            data.put("generatorName", NBTString("flat"))
+            data.put("Time",       NBTLong(0L))
+            data.put("DayTime",    NBTLong(0L))
+            // (ajoutez ici d’autres overrides si besoin : SpawnX/Y/Z, etc.)
         })
     }
 
-    File(worldDir, "level.dat").outputStream().use { os ->
-        NBTWriter(os).use { writer ->
-            // écrit le compound racine sans nom
-            writer.writeNamed("", levelDat)
+    // 3) Écrire ce nouveau level.dat sous worldDir
+    val outFile = File(worldDir, "level.dat")
+    outFile.outputStream().buffered().use { os ->
+        NBTWriter(os).use { w ->
+            w.writeNamed("", patched)
         }
-
     }
 }
